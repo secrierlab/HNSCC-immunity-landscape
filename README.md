@@ -4,12 +4,9 @@
 
 This code has been developed to investigate the immunity lanscape of primary head & neck squamous cell carcinomas. 
 
-## Data
-
-The data employed for this analysis can be found in the **/data** folder or is available upon request.
-
 ## Code
-The scripts employed in this analysis can be found in the **/code** folder as follows:
+The scripts employed in this analysis are as follows:
+
 
 
 
