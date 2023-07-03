@@ -2,7 +2,7 @@
 
 ## Description
 
-This code has been developed to investigate the immunity lanscape of primary head & neck squamous cell carcinomas. 
+This code has been developed to investigate the immunity lanscape of primary head & neck squamous cell carcinomas, as presented in the manuscript "Immune cell abundance and T cell receptor landscapes suggest new patient stratification strategies in head and neck squamous cell carcinoma" (Secrier et al). 
 
 ## Code
 The scripts employed in this analysis are as follows:
