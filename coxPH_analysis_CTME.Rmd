@@ -1,0 +1,223 @@
+---
+title: "Survival analysis in the HN cohort"
+author: "Maria Secrier"
+date: "09/10/2018"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.path = "plots/")
+```
+
+## Libraries
+```{r libs}
+library("survminer")
+library("survival")
+library("knitr")
+library("dplyr")
+library("forestmodel")
+library ("plyr")
+```
+
+## Reading data
+
+```{r readdata}
+load("dat.hn.plusgroups.RData")
+dat.hn <- dat.hn.plusgroups
+dat.hn$Age <- sapply(dat.hn$Age..At.Surgery.,
+                     function(x) ifelse(x<=40,"25-40",
+                                        ifelse(x<=60,"40-60",ifelse(x<=80,"60-80",">80"))))
+dat.hn$Age <- factor(dat.hn$Age,
+                     levels=c("25-40","40-60","60-80",">80"))
+dat.hn[which(dat.hn$Recurrence.YesNo == "NDF"),]$Recurrence.YesNo <- NA
+```
+
+## Survival by exhaustion group
+
+```{r survByImmunityGroup, echo=FALSE, fig.width=10, fig.height=8, dev='pdf'}
+fit <- survfit(Surv(OS.days, AliveDead) ~ ImmunityGroup, data=dat.hn)
+ggsurvplot(fit, linetype="strata",
+           #palette = c("#336699", "#9492D0",
+            #          "#F98948","#993955"),
+           #conf.int = TRUE, 
+           pval=TRUE,#legend.labs=c("Hi", "Sex=2"),
+           ggtheme = theme_minimal(), risk.table=TRUE, risk.table.y.text.col = TRUE,
+          risk.table.height = 0.25, # the height of the risk table
+          risk.table.y.text = FALSE,# show bars instead of names in text annotations
+                                    # in legend of risk table.
+          ncensor.plot = TRUE,      # plot the number of censored subjects at time t
+          ncensor.plot.height = 0.25,
+          #conf.int.style = "step",  # customize style of confidence intervals
+          surv.median.line = "hv")  # add the median survival pointer.
+           #legend.labs = 
+           # c("Absent", "Weak", "Exhausted", "PC high"))
+```
+
+
+To double check the labelling is right, plotting the survival values by group and also the exhaustion by group:
+
+```{r survBoxplotByExhGroup, echo=FALSE}
+ggplot(dat.hn, aes(ImmunityGroup,OS.days))+
+  geom_boxplot()
+
+```
+
+## Multivariate Cox PH analysis
+
+```{r multicox, echo=FALSE}
+dat.hn.keep <- dat.hn[which(!is.na(dat.hn$ImmunityGroup)),]
+#dat.hn.keep$ImmunityGroup <- factor(dat.hn.keep$ImmunityGroup)
+covariates <- c(#"productive_clonality","observed_richness",
+                "Age","Sex",
+                "Stage..Clinical.Simplified",
+                "Tstage","Nstage",
+                #"Grade",
+                "HPV.Status","Smoker",
+                "Basic.Site",
+                "Recurrence.YesNo",
+                "ImmunityGroup")
+multiv_formulas <- paste(covariates,
+                        collapse="+") 
+res.cox <- coxph(as.formula(paste0("Surv(OS.days, AliveDead) ~ 0+",
+                                   multiv_formulas)), 
+                 data =  dat.hn)
+summary(res.cox)
+res.cox.x <- summary(res.cox)
+#print(x)
+p.value.model <- signif(res.cox.x$wald["pvalue"])
+p.value.individual<-signif(res.cox.x$coef[,"Pr(>|z|)"])#wald["pvalue"])
+wald.test<-signif(res.cox.x$wald["test"], digits=2)
+beta<-signif(res.cox.x$coef[,"coef"], digits=2);#coeficient beta
+HR <-signif(res.cox.x$coef[,"exp(coef)"], digits=2);#exp(beta)
+HR.confint.lower <- signif(res.cox.x$conf.int[,"lower .95"], 2)
+HR.confint.upper <- signif(res.cox.x$conf.int[,"upper .95"],2)
+#HR <- paste0(HR, " (", 
+#             HR.confint.lower, "-", HR.confint.upper, ")")
+res.cox.multi<-data.frame(cbind(rownames(res.cox.x$coef),
+                                p.value.model,wald.test,
+                                p.value.individual,
+           beta, HR,HR.confint.lower, HR.confint.upper))
+colnames(res.cox.multi) <- c("Covariate","P-value (model)",
+                   "Wald test (model)",
+                   "P-value (category)","Beta-coefficient",
+                   "HR","95% CI for HR (lower)",
+                   "95% CI for HR (upper)")
+write.csv(res.cox.multi[,1:6],"HNcohort.coxph_OS.multivariate.CTME.csv",
+          row.names=FALSE, quote=FALSE)
+save(res.cox.multi,file="res.cox.multi.OS.CTME.RData")
+```
+
+Multivariate model:
+
+# ```{r multivariateCox.HRs.extended, echo=FALSE, fig.width=10,fig.height=8}
+# ggforest(res.cox,data =  dat.hn, main="",fontsize=0.6)
+# ```
+
+With added details:
+
+# ```{r multivariateCox.HRs.detailed.extended,echo=FALSE, fig.width=10,fig.height=8}
+# forest_model(res.cox)
+# ```
+
+
+## Multivariate Cox PH analysis including most data and no TCR info
+
+```{r multicox2, echo=FALSE}
+
+dat.hn.totest <- dat.hn[which(dat.hn$Recurrence.YesNo %in% c("Yes","No",NA)),]
+dat.hn.totest$Nstage.simp <- sapply(dat.hn.totest$Nstage,
+                                    function(x) ifelse(x==0,0,1))
+dat.hn.totest$Stage <- sapply(dat.hn.totest$Stage..Clinical.Simplified,
+                              function(x) ifelse(x %in% c("I","II"),"Early","Late"))
+covariatesOrig <- c("Age..At.Surgery.",
+  "Sex",
+                "Stage","Tstage",
+                "Nstage",
+                "HPV.Status","Smoker",
+                "Basic.Site",
+                #"Grade",
+                "Recurrence.YesNo",
+  "ImmunityGroup")
+
+dat.hn.totest$Basic.Site <- factor(dat.hn.totest$Basic.Site, levels=c("Oral cavity","Larynx","Pharynx","Other"))
+#dat.hn.totest$ImmunityGroup <- factor(dat.hn.totest$ImmunityGroup, levels=c("Absent","Weak","Exhausted","PlasmaCellHigh"))
+dat.hn.totest$Tstage <- factor(dat.hn.totest$Tstage)
+dat.hn.totest$Nstage <- factor(dat.hn.totest$Nstage)
+
+covariates <- c("Age","Sex",
+                "ClinicalStage","Tstage",
+                "Nstage",
+                "HPVstatus","Smoker",
+                "TumourLocation",
+                "Recurrence",
+  "ImmunityGroup")
+
+colnames(dat.hn.totest)[match(covariatesOrig,colnames(dat.hn.totest))] <- 
+  covariates
+
+
+multiv_formulas <- paste(covariates,
+                        collapse="+") 
+res.cox <- coxph(as.formula(paste0("Surv(OS.days, AliveDead) ~ 0+",
+                                   multiv_formulas)), 
+                 data =  dat.hn.totest)
+summary(res.cox)
+res.cox.x <- summary(res.cox)
+#print(x)
+p.value.model <- signif(res.cox.x$wald["pvalue"])
+p.value.individual<-signif(res.cox.x$coef[,"Pr(>|z|)"])#wald["pvalue"])
+wald.test<-signif(res.cox.x$wald["test"], digits=2)
+beta<-signif(res.cox.x$coef[,"coef"], digits=2);#coeficient beta
+HR <-signif(res.cox.x$coef[,"exp(coef)"], digits=2);#exp(beta)
+HR.confint.lower <- signif(res.cox.x$conf.int[,"lower .95"], 2)
+HR.confint.upper <- signif(res.cox.x$conf.int[,"upper .95"],2)
+#HR <- paste0(HR, " (", 
+#             HR.confint.lower, "-", HR.confint.upper, ")")
+res.cox.multi<-data.frame(cbind(rownames(res.cox.x$coef),
+                                p.value.model,wald.test,
+                                p.value.individual,
+           beta, HR,HR.confint.lower, HR.confint.upper))
+colnames(res.cox.multi) <- c("Covariate","P-value (model)",
+                   "Wald test (model)",
+                   "P-value (category)","Beta-coefficient",
+                   "HR","95% CI for HR (lower)",
+                   "95% CI for HR (upper)")
+write.csv(res.cox.multi[,1:6],"HNcohort.coxph_OS.multivariate.noTCR.CTME.csv",
+          row.names=FALSE, quote=FALSE)
+save(res.cox.multi,file="res.cox.multi.OS.noTCR.CTME.RData")
+```
+
+Multivariate model, no TCR:
+
+# ```{r multivariateCox.HRs.extended.noTCR, echo=FALSE, fig.width=10,fig.height=8, dev='pdf'}
+# ggforest(res.cox,data =  dat.hn.totest, main="",fontsize=0.6)
+# ```
+
+With added details, no TCR:
+
+# ```{r multivariateCox.HRs.detailed.extended.noTCR,echo=FALSE, fig.width=10,fig.height=8,dev='pdf'}
+# forest_model(res.cox)
+# ```
+
+Also summarise the full clinical data:
+
+```{r summaryTable, echo=FALSE, dev='pdf'}
+library(gtsummary)
+load("dat.annot.plusimm.2021.RData")
+dat.hn <- dat.annot.plusimm
+
+# make dataset with a few variables to summarize
+dat.sum <- dat.hn %>% select(Race, Sex, Stage,HPV.category,Tumor.Site,
+                             Smoking.Category)
+
+# summarize the data with our package
+table1 <- tbl_summary(dat.sum)
+table1
+table1 %>%
+  as_gt() %>%
+  gt::gtsave(filename = "summaryTable.png") 
+
+```

@@ -1,0 +1,181 @@
+---
+title: "WES data processing and integration"
+author: "Maria Secrier"
+date: "25/04/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Description
+
+This script parses the NGS data in the H&N cohort. 
+
+<!--Libraries-->
+```{r libs, echo=FALSE, warning=FALSE}
+library(gdata)
+library(pheatmap)
+library(reshape)
+library(ggplot2)
+library(GenVisR)
+library(survival)
+library(RColorBrewer)
+library(ComplexHeatmap)
+library(GSVA)
+library(pheatmap)
+```
+
+## Analysis
+
+Load and parse data, match IDs:
+
+```{r readdat, echo=FALSE}
+
+# Load HN data:
+load("dat.annot.plusimm.2021.RData")
+dat.annot.plusimm$ImmunityGroup <- factor(dat.annot.plusimm$ImmunityGroup,
+                      levels=c("Absent","MacrophageRich","DCrich","PCrich","Cytotoxic"))
+
+
+# Load mutation data:
+load("snvs.RData")
+
+snvs.nonsyn <- snvs[which(snvs$Functional_Class %in%
+                            c("missense_variant",
+                              "frameshift_variant",
+                              "stop_gained",
+                              #"5_prime_UTR_premature_start_codon_gain_variant",
+                              "disruptive_inframe_deletion",
+                              "disruptive_inframe_insertion",
+                              "start_lost",
+                              "stop_lost","gene_fusion",
+                              "bidirectional_gene_fusion")),]
+snvs.missense <- snvs[which(snvs$Functional_Class ==
+                            "missense_variant"),]
+
+```
+
+
+Top mutated genes:
+
+```{r}
+### Plot top frequently mutated genes:
+
+geneFreq <- rev(sort(table(unique(snvs.nonsyn[,c("SampleID","Gene")])$Gene)))
+
+# read in cancer genes:
+rtks <- read.table("../../../data/RTKgeneList.txt",
+                   header=TRUE, sep="\t",
+                   stringsAsFactors = FALSE)
+cancerGenes <- rtks$Gene
+
+geneFreq.cancer <- rev(sort(geneFreq[which(names(geneFreq) %in% cancerGenes)]))
+
+snvs$MappedID <- sapply(snvs$Sample, function(x)
+  paste(strsplit(as.character(x),"_")[[1]],collapse="-"))
+
+
+snvs.nonsyn.keep <- snvs.nonsyn[which(snvs.nonsyn$Gene %in% cancerGenes),]
+
+### Reformatting and renaming columns to comply with MAF annotation for the waterfall function:
+snvs.MAF <- unique(snvs.nonsyn.keep[,c("SampleID","Gene","Functional_Class")])
+colnames(snvs.MAF) <- c("sample","gene","variant_class")
+
+genomic.MAF <- snvs.MAF
+
+# specifying the variant class order:
+vco.snv <- unique(snvs.MAF$variant_class)
+vco <- unique(genomic.MAF$variant_class)
+
+# oncoPrint(mat,
+#     alter_fun = alter_fun, #col = col, 
+#     column_title = column_title, heatmap_legend_param = heatmap_legend_param)
+
+```
+
+### COMPLEX HEATMAPS:
+
+```{r}
+
+# First, need to restrict genomicMAF to top genes:
+#tb.count <- table(unique(genomic.MAF[,c("sample","gene")])$gene)
+topgenes <- cancerGenes
+
+genomic.MAF.topgenes <- genomic.MAF
+
+#### Trying to use complex heatmaps:
+
+matMut <- array("",c(length(unique(genomic.MAF.topgenes$gene)),
+                     length(unique(snvs$SampleID))))
+rownames(matMut) <- unique(genomic.MAF.topgenes$gene)
+colnames(matMut) <- unique(snvs$SampleID)
+for (gene in unique(genomic.MAF.topgenes$gene)) {
+  for (sample in unique(snvs$SampleID)) {
+    if (nrow(genomic.MAF.topgenes[which((genomic.MAF.topgenes$sample == sample)&
+                               (genomic.MAF.topgenes$gene == gene)),])>0) {
+      matMut[gene,sample] <- paste(unique(genomic.MAF.topgenes[which((genomic.MAF.topgenes$sample == sample)&
+                      (genomic.MAF.topgenes$gene == gene)),]$variant_class),collapse=";")
+    } 
+  }
+}
+
+
+
+col = c(missense_variant = "#6a3d9a", frameshift_variant = "#33a02c",
+        stop_gained="#ff7f00",disruptive_inframe_deletion="#E36397")#,
+        #`5_prime_UTR_premature_start_codon_gain_variant`="yellow")
+
+match.id<- colnames(matMut)
+
+df<- dat.annot.plusimm[which(dat.annot.plusimm$Sample %in% match.id),c("Sample","HPV.category","Stage","ImmunityGroup")]
+colnames(df) <- c("Sample","HPVstatus","Stage","ImmunityGroup")
+rownames(df) <- df$Sample
+#df$TMB <- log10(df$TMB+1)
+
+mix.ha<- HeatmapAnnotation(df = df[,2:4], 
+col=list(
+ ImmunityGroup=c("Absent"="#4A6FA5", 
+                                  "MacrophageRich"="#DCD6F7",
+                 "DCrich"="#FFE89F",
+                                  "PCrich"="#F98948",
+                                  "Cytotoxic"="#993955"),
+                HPVstatus=c("Positive"="#A80874",
+                              "Negative"="#9A98B5"),
+                Stage=c("I"="#f6e8c3","II"="#d8b365",
+                          "III"="#c7eae5","IV"="#5ab4ac",
+                        "Unknown tumour stage"="grey")))
+  #HPV.Status=c(Negative="black",Positive="#8c510a")))#,
+                                                      #Stage..Clinical.EarlyLate=c(Early="#b8e186",Late="#c51b7d","<NA>"="grey")))
+
+columnOrder <- names(rev(sort(table(genomic.MAF$sample))))
+
+matMut <- matMut[,which(colnames(matMut) %in% rownames(df))]
+
+pdf("plots2021.extra/oncoprintRTK.HN.pdf",h=6,w=10,onefile=FALSE)
+oncoPrint(matMut, get_type = function(x) strsplit(x, ";")[[1]],
+          alter_fun = list(
+            background = function(x, y, w, h) {
+              grid.rect(x, y, w-unit(0.5, "mm"), h-unit(0.5, "mm"), gp = gpar(fill = "#CCCCCC", col = NA))
+            },
+            missense_variant = function(x, y, w, h) grid.rect(x, y, w-unit(0.5, "mm"), h*0.5, 
+                                                              gp = gpar(fill = col["missense_variant"], col = NA)),
+            
+            frameshift_variant = function(x, y, w, h) grid.rect(x, y, w-unit(0.5, "mm"), h*0.5, 
+                                                                gp = gpar(fill = col["frameshift_variant"], col = NA)),
+            stop_gained = function(x, y, w, h) grid.rect(x, y, w-unit(0.5, "mm"), h*0.5, 
+                                                         gp = gpar(fill = col["stop_gained"], col = NA)),
+            
+            disruptive_inframe_deletion = function(x, y, w, h) grid.rect(x, y, w-unit(0.5, "mm"), h*0.5, 
+                                                       gp = gpar(fill = col["disruptive_inframe_deletion"], col = NA))),
+                                                                 col = col,
+          show_column_names=FALSE,
+          #column_order = c(samplesOrdered,samplesAdditional),
+          pct_gp = gpar(fontsize = 8),
+          bottom_annotation = mix.ha,
+          row_order=names(rev(sort(topgenes))))
+dev.off()
+
+```
+
