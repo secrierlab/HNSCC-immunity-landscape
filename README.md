@@ -1,4 +1,4 @@
-# Immunity profiles in HNSCC unveil clinically relevant groups
+# Immunity profiles in HNSCC
 
 ## Description
 
